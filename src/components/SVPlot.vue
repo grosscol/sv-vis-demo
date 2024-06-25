@@ -1,24 +1,32 @@
 <template>
   <div id="holder" ref="holder" class="child-component">
     <svg id="structVarReads" style="display: block;" height="500px" width="100%" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="agg-gradient">
+          <stop offset="0%" stop-color="green" />
+          <stop offset="100%" stop-color="white" />
+        </linearGradient>
+      </defs>
       <clipPath id="depth-clip">
         <rect x="0%" y="0%" width="100%" height="100%"></rect>
       </clipPath>
       <g id="background">
         <rect height="100%" width="100%" opacity=0.1 fill="#AAAABB"></rect>
       </g>
-      <g id="depths-container">
-        <g id="background-depths"></g>
-        <g id="depths"></g>
+      <g id="depths"></g>
+      <g id="sv-bounds">
+        <line id="sv-start" y0="0%" y1="100%" stroke="black" stroke-dasharray="2 1"/>
+        <line id="sv-end"   y0="0%" y1="100%" stroke="black" stroke-dasharray="2 1"/>
       </g>
-      <g id="coverage"></g>
-      <g id="alignments">
+      <g id="alignments" style="visibility: hidden">
         <g id="split-reads"  class="sv__splits"></g>
         <g id="paired-reads" class="sv__pairs"></g>
       </g>
       <g id="aggregates"></g>
     </svg>
   </div>
+  <button @click="toggle_visibility(svg.select('#alignments'))">Show/Hide Alignments</button>
+  <button @click="toggle_visibility(svg.select('#aggregates'))">Show/Hide Aggregates</button>
   <div id="dbg-info">
   </div>
 </template>
@@ -37,14 +45,16 @@ import cov_ext_bravo from '../assets/cov_ext_bravo.json'
 const genome_position_limits = [50186300, 50186900]
 const max_insert_size = 300
 const max_depth = 50
+const sv_start = 50186563
+const sv_end = 50186750
 
 /* Proceseed Data */
 let plot_data = []
 
 
-/* Alignment Binning 
+/* Alignment Binning
   Requires genome_position_limits and max_insert_size.
-  Each bin is 
+  Each bin is
     {start: int, end: int, pair_idxs: [], splits_idxs: []}
   Distance bin is the y-axis binning.
   Position bin is the x-axis binning.
@@ -62,7 +72,6 @@ let drawing_clip  = null
 let drawing       = null
 let splits        = null
 let pairs         = null
-let cover         = null
 let aggregates    = null
 let x_scale       = d3.scaleLinear()
 let y_scale       = d3.scaleLinear()
@@ -114,11 +123,10 @@ function initSvg() {
 
   splits = svg.selectAll("#split-reads").selectAll()
   pairs = svg.select("#paired-reads").selectAll()
-  cover = svg.select("#coverage").selectAll()
   aggregates = svg.select("#aggregates").selectAll()
 }
 
-function initPlotData(){
+function initPlotScales(){
   x_scale.domain(genome_position_limits)
     .range([0, x_range_limit])
 
@@ -129,14 +137,28 @@ function initPlotData(){
     .range([100, 0])
 }
 
+function plot_sv_bounds(){
+  let start_line = svg.select("#sv-start")
+  let end_line = svg.select("#sv-end")
+
+  start_line
+    .attr("x1",x_scale(sv_start))
+    .attr("x2",x_scale(sv_start))
+  end_line
+    .attr("x1",x_scale(sv_end))
+    .attr("x2",x_scale(sv_end))
+}
+
 // Run when data arrives to populate svg
 function updatePlot(){
+  plot_sv_bounds()
   plot_alignments(pairs, plot_data.all_pairs, pair_palette)
   plot_alignments(splits, plot_data.all_splits, split_palette)
 
   updateBackgroundCoverage()
   updateCarrierCoverage()
-  plot_bins(aggregates, bin_grid)
+  //plot_bins(aggregates, bin_grid)
+  plot_bins_v2(aggregates, bin_grid)
 }
 
 function updateCarrierCoverage() {
@@ -192,7 +214,7 @@ function calc_position_bin_index(pos){
 
 /* Initialize array of bins for aggregating alignments to reduce overplotting.
 Conceptually, this is a 2d array of bins that are instead layed out in a single array.
-Each row is laid out end to end.  
+Each row is laid out end to end.
 i.e. The last element of the 1st row is followed by first element of the 2nd row.
 
 Each bin tracks indexes of the alignments it aggregates for each category of alingment.
@@ -217,6 +239,7 @@ function generate_data_bins() {
         bin_idx: bin_idx,
         pos_start:  genome_position_limits[0] + p_idx * position_binwidth,
         dist_start: d_idx * distance_binwidth,
+        dist_end: (d_idx +1) * distance_binwidth,
         pair_idxs: [],
         split_idxs: [],
         n_alignments: 0
@@ -225,7 +248,7 @@ function generate_data_bins() {
   }
 }
 
-/* Preocess paired reads and split pairs alignment sets 
+/* Preocess paired reads and split pairs alignment sets
    Calc distance and index attribute to each alignment
    Return shallow flattened copy of data
 */
@@ -234,7 +257,7 @@ function update_alignments(aln_data){
   aln_data.all_splits.forEach((ele) => update_split_dist(ele))
 
   return (
-    {all_pairs: aln_data.all_pairs.flat(), 
+    {all_pairs: aln_data.all_pairs.flat(),
      all_splits: aln_data.all_splits.flat()}
   )
 }
@@ -248,7 +271,7 @@ function compute_max_distance(pdata){
 }
 
 
-/* Calc distance of a pair of alignments. 
+/* Calc distance of a pair of alignments.
   Distance between lowest starts and and max stop position of alignments.
   Append as attribute of each alignment. */
 function update_pair_dist(align_set){
@@ -330,13 +353,13 @@ function plot_alignments(sel, alignments, palette){
     .style("opacity", 0.1)
 }
 
-/* Generate svg rect y value bin in terms of total height that accomodates the 
+/* Generate svg rect y value bin in terms of total height that accomodates the
   inverted nature of the SVG scale and the height of the bin (d_increment)
   E.g. if distance index is 0, and increment is 10,
        then upper left corner (y) should be at "90%"
   */
 function index_to_axis_percent(idx, increment){
-  return `${100 - increment * (idx + 1)}%` 
+  return `${100 - increment * (idx + 1)}%`
 }
 
 function plot_bins(sel, bins){
@@ -359,6 +382,41 @@ function plot_bins(sel, bins){
     .attr("bin_idx", d => d.bin_idx)
 }
 
+/* Calculate the aggregate bin position with offset to avoid overplotting */
+function bin_jitter(bin){
+  let offset_seq = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+  let offset_idx = bin.pos_idx % (offset_seq.length -1)
+  let offset = Math.floor( distance_binwidth * offset_seq[offset_idx] )
+
+  return(bin.dist_start + offset)
+}
+
+function plot_bins_v2(sel, bins){
+  let max_bin_alns = d3.max(bin_grid, d => d.n_alignments)
+  let opacity_scale = d3.scaleSqrt().domain([0, max_bin_alns]).range([0, 1]).clamp(true)
+
+  let draw_width = x_scale(genome_position_limits[0] + distance_binwidth)
+
+  sel.data(bins).enter()
+    .append("rect")
+    .attr("opacity", d => opacity_scale(d.n_alignments))
+  //.attr("fill", "url(#agg-gradient)")
+    .attr("fill", "red")
+    .attr("x", d => x_scale(d.pos_start))
+    .attr("width", draw_width)
+    .attr("y", d => y_scale(bin_jitter(d)))
+    .attr("height", "0.75%")
+}
+
+function toggle_visibility(sel){
+  if( sel.style("visibility") == "visible") {
+    sel.style("visibility", "hidden")
+  }
+  else {
+    sel.style("visibility", "visible")
+  }
+}
+
 onBeforeUpdate(() => {
   updatePlot()
 })
@@ -376,7 +434,7 @@ onMounted(() => {
   // process and rearrange data for plotting
   update_bins(plot_data)
   initSvg()
-  initPlotData()
+  initPlotScales()
   updatePlot()
 })
 
