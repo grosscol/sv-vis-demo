@@ -34,10 +34,7 @@
 <script setup>
 import {onMounted, onBeforeUpdate, ref} from 'vue'
 import * as d3 from "d3"
-import plot_sm_data from '../assets/plot_data.json'
 import plot_ext_data from '../assets/plot_ext_data.json'
-import cov_data from '../assets/cov_data.json'
-import cov_bravo from '../assets/cov_bravo.json'
 import cov_ext_data from '../assets/cov_ext_data.json'
 import cov_ext_bravo from '../assets/cov_ext_bravo.json'
 
